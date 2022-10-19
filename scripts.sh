@@ -19,6 +19,6 @@ python -u main.py --dataset svhn --patch_size 8 &> svhn_8.txt
 python -u main.py --dataset svhn --patch_size 16 &> svhn_16.txt
 
 ## TinyImageNet ## 
-python -u main.py --dataset ti --patch_size 8 --data_path /home/local/ASUAD/schhabr6/DB/ti &> ti_8.txt
-python -u main.py --dataset ti --patch_size 16 --data_path /home/local/ASUAD/schhabr6/DB/ti &> ti_16.txt
+python -u main.py --dataset ti --patch_size 8 --data_path <datasetpath> &> ti_8.txt
+python -u main.py --dataset ti --patch_size 16 --data_path <datasetpath> &> ti_16.txt
 

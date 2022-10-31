@@ -29,7 +29,8 @@ def patchswap(args, x1, y1, alpha=1.0):
         thresh = -torch.kthvalue(-rand_probs, x1_frames_count, -1, keepdims=True)[0]
     else:
         thresh = torch.Tensor([1.1]).cuda()
-    swap = (rand_probs - thresh) >= 0
+
+    swap = rand_probs >= thresh
     swap = swap.reshape(m, 1, args.num_patches, 1, 1)
     x = x1 * swap + x2 * (~swap)
 
@@ -42,7 +43,7 @@ def patchswap(args, x1, y1, alpha=1.0):
 
 
 def patchswap_loss(criterion, pred, y_a, y_b, lam):
-    return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
+    return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b) + lam * np.log(lam + 1e-6) + (1 - lam) * np.log(1 - lam + 1e-6)
 
 
 def accuracy(args, target, output, k=5):

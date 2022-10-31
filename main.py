@@ -15,10 +15,9 @@ from model import ViT
 def init_parser():
     parser = argparse.ArgumentParser(description='PatchSwap')
     parser.add_argument('--data_path', metavar='DIR', default='./data/', help='path to dataset')
-    parser.add_argument('--dataset', type=str.lower, choices=['cifar10', 'cifar100', 'fmnist', 'svhn', 'ti'], default='cifar10')
+    parser.add_argument('--dataset', type=str.lower, choices=['fmnist', 'svhn', 'ti', 'cifar10', 'cifar100'], default='fmnist')
     parser.add_argument('--patch_size', default=4, type=int)
     parser.add_argument('--model_path', type=str, default='./model/')
-    parser.add_argument('--workers', type=int, default=4)
 
     parser.add_argument('--epochs', type=int, default=300)
     parser.add_argument('--warmup', type=int, default=10)
@@ -46,6 +45,7 @@ def update_args(args):
     args.model_path = os.path.join(args.model_path, args.dataset)
     os.makedirs(args.model_path, exist_ok=True)
 
+    args.workers = max(os.cpu_count() - 2, 1)
     return args
 
 
@@ -66,7 +66,7 @@ def main():
     model = ViT(args)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
-    criterion = torch.nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss()
     criterion_ = nn.CrossEntropyLoss(reduction='none')
 
     if args.is_cuda:
@@ -86,7 +86,7 @@ def main():
 
         if (epoch + 1) % 25 == 0:
             train_acc1, train_acc5, train_cm, train_loss = cls_validate(args, train_loader, model, criterion_)
-            print(f'[Epoch: {epoch + 1}]\tTrain Top1: {train_acc1:.1f}%\tTop5: {train_acc5:.1f}%\tLoss: {train_loss:.4f}')
+            print(f'[Epoch: {epoch + 1}]\tTrain Top1: {train_acc1:.1%}\tTop5: {train_acc5:.1%}\tLoss: {train_loss:.4f}')
             if args.cm:
                 print(train_cm)
 
@@ -106,11 +106,7 @@ def main():
         torch.save(model.state_dict(), os.path.join(args.model_path, 'model.pt'))
 
     total_mins = (time() - time_begin) / 60
-    print(f'Script finished in {total_mins:.2f} minutes, '
-          f'best top-1: {best_acc1:.2f}, '
-          f'best top-5: {best_acc5:.2f}, '
-          f'final top-1: {te_acc1:.2f}, '
-          f'final top-5: {te_acc5:.2f}')
+    print(f'Script finished in {total_mins:.2f} minutes, best top-1: {best_acc1:.1%}, best top-5: {best_acc5:.1%}, final top-1: {te_acc1:.1%}, final top-5: {te_acc5:.1%}')
 
 
 def cls_train(args, train_loader, model, criterion, optimizer):

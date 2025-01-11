@@ -1,6 +1,6 @@
 {
 	"patch_size": 4,
-	"epochs":2,
+	"epochs":300,
 	"warmup":10,
 	"lr":5e-4,
 	"batch_size":256,

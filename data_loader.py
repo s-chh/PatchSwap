@@ -1,49 +1,65 @@
-import torchvision.transforms as transforms
-import torchvision.datasets as datasets
 import os
-import torch
+from torchvision import datasets
+from torchvision import transforms
+from torch.utils.data import DataLoader
 
+def get_data_loader(args):
+	train_transform = []
+	if args.randomresizecrop:
+		train_transform.append(transforms.RandomResizedCrop(args.image_size))
+	elif args.padding > 0:
+		train_transform.append(transforms.Resize(args.image_size))
+		train_transform.append(transforms.RandomCrop([args.image_size, args.image_size], padding=args.padding))
+	elif args.resizecrop > 0:
+		train_transform.append(transforms.Resize(args.resizecrop))
+		train_transform.append(transforms.RandomCrop(args.image_size))
+	else:
+		train_transform.append(transforms.Resize([args.image_size, args.image_size]))
 
-def get_loaders(args):
-    train_augmentations = [transforms.Resize(args.img_size)]
-    if args.padding > 0:
-        train_augmentations += [transforms.RandomCrop(args.img_size, padding=args.padding)]
-    if args.hflip:
-        train_augmentations += [transforms.RandomHorizontalFlip()]
-    train_augmentations += [transforms.ToTensor(), transforms.Normalize(mean=args.mean, std=args.std)]
-    train_augmentations = transforms.Compose(train_augmentations)
+	if args.hflip:
+		train_transform.append(transforms.RandomHorizontalFlip())
 
-    if args.dataset.lower().startswith('cifar'):
-        train_dataset = datasets.__dict__[args.dataset.upper()](root=os.path.join(args.data_path, args.dataset), train=True, download=True, transform=train_augmentations)
-    elif args.dataset == 'fmnist':
-        train_dataset = datasets.FashionMNIST(root=os.path.join(args.data_path, args.dataset), train=True, download=True, transform=train_augmentations)
-    elif args.dataset == 'svhn':
-        train_dataset = datasets.SVHN(root=os.path.join(args.data_path, args.dataset), split='train', download=True, transform=train_augmentations)
-    else:
-        train_dataset = datasets.ImageFolder(root=os.path.join(args.data_path, args.dataset, 'train'), transform=train_augmentations)
+	train_transform.append(transforms.ToTensor())
+	train_transform.append(transforms.Normalize(args.mean, args.std))
+	train_transform = transforms.Compose(train_transform)
 
-    test_augmentations = transforms.Compose([transforms.Resize(args.img_size),
-                                             transforms.ToTensor(),
-                                             transforms.Normalize(mean=args.mean, std=args.std)])
+	test_transform = []
+	if args.image_size == 224:
+		test_transform.append(transforms.Resize(256))
+		test_transform.append(transforms.CenterCrop(224))
+	else:
+		test_transform.append(transforms.Resize([args.image_size, args.image_size]))
 
-    if args.dataset.lower().startswith('cifar'):
-        val_dataset = datasets.__dict__[args.dataset.upper()](root=os.path.join(args.data_path, args.dataset), train=False, download=True, transform=test_augmentations)
-    elif args.dataset == 'fmnist':
-        val_dataset = datasets.FashionMNIST(root=os.path.join(args.data_path, args.dataset), train=False, download=True, transform=test_augmentations)
-    elif args.dataset == 'svhn':
-        val_dataset = datasets.SVHN(root=os.path.join(args.data_path, args.dataset), split='test', download=True, transform=test_augmentations)
-    else:
-        val_dataset = datasets.ImageFolder(root=os.path.join(args.data_path, args.dataset, 'val'), transform=test_augmentations)
+	test_transform.append(transforms.ToTensor())
+	test_transform.append(transforms.Normalize(args.mean, args.std))
+	test_transform = transforms.Compose(test_transform)
 
-    train_loader = torch.utils.data.DataLoader(train_dataset,
-                                               batch_size=args.batch_size,
-                                               shuffle=True,
-                                               num_workers=args.workers,
-                                               drop_last=True)
+	if args.dataset.lower() == 'cifar10':
+		train = datasets.CIFAR10(root=args.data_path, train=True, transform=train_transform, download=True)
+		test = datasets.CIFAR10(root=args.data_path, train=False, transform=test_transform, download=True)
+	elif args.dataset.lower() == 'cifar100':
+		train = datasets.CIFAR100(root=args.data_path, train=True, transform=train_transform, download=True)
+		test = datasets.CIFAR100(root=args.data_path, train=False, transform=test_transform, download=True)
+	elif args.dataset.lower() == 'fmnist':
+		train = datasets.FashionMNIST(root=args.data_path, train=True, transform=train_transform, download=True)
+		test = datasets.FashionMNIST(root=args.data_path, train=False, transform=test_transform, download=True)
+	elif args.dataset.lower() == 'svhn':
+		train = datasets.SVHN(root=args.data_path, split='train', transform=train_transform, download=True)
+		test = datasets.SVHN(root=args.data_path, split='test', transform=test_transform, download=True)
+	else:
+		train = datasets.ImageFolder(root=os.path.join(args.data_path, 'train'), transform=train_transform)
+		test = datasets.ImageFolder(root=os.path.join(args.data_path, 'test'), transform=test_transform)
 
-    val_loader = torch.utils.data.DataLoader(val_dataset,
-                                             batch_size=args.batch_size,
-                                             shuffle=False,
-                                             num_workers=args.workers,
-                                             drop_last=False)
-    return train_loader, val_loader
+	train_loader = DataLoader(dataset=train,
+							batch_size=args.batch_size,
+							shuffle=True,
+							num_workers= args.n_workers,
+							drop_last=True)
+
+	test_loader = DataLoader(dataset=test,
+							batch_size=args.batch_size,
+							shuffle=True,
+							num_workers=args.n_workers,
+							drop_last=False)
+
+	return train_loader, test_loader

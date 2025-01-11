@@ -1,0 +1,19 @@
+{
+	"patch_size": 4,
+	"epochs":2,
+	"warmup":10,
+	"lr":5e-4,
+	"batch_size":256,
+	"weight_decay":0.05,
+	"image_size":32,
+	"cutout":16,
+	"hflip": true,
+	"randomresizecrop": false,
+	"padding": 4,	
+	"resizecrop": 0,
+	"n_channels":3,
+	"n_classes":10,
+	"cm": true,
+	"mean" : [0.4914, 0.4822, 0.4465],
+	"std": [0.2470, 0.2435, 0.2616]
+}

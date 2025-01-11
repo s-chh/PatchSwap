@@ -1,68 +1,147 @@
 import torch
-import torch.nn.functional as F
 import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+import torch.nn.functional as F
 from sklearn.metrics import confusion_matrix, top_k_accuracy_score
-import math
 
 
-def patchswap(args, x1, y1, alpha=1.0):
-    m = x1.shape[0]
+def patchify(x, patch_size):
+    """
+        function for patchify an input image.
+        # B, C, H, W ; P  -->  B, -1, P*P*C
+    """
+    n_patches = (x.shape[-1] // patch_size) ** 2                                    # (H//P) ^ 2
+    x = x.unfold(2, patch_size, patch_size).unfold(3, patch_size, patch_size)       # B, C, H, W             -->  B, C, H//P, W//P, P, P
+    x = x.permute(0, 2, 3, 1, 4, 5)                                                 # B, C, H//P, W//P, P, P --> B, H//P, W//P, C, P, P
+    x = x.reshape(x.shape[0], n_patches, -1)                                        # B, H//P, W//P, C, P, P --> B, (H//P* W//P), (C*P*P)
+    return x
 
+
+def unpatchify(x, patch_size):
+    """
+        function for unpatchify a sequence to an image.
+        # B, S, E; P   -->  B, C, H, W
+        where  S = (H//P* W//P)  and  E = P*P*C
+    """
+    h = int(x.shape[1] ** 0.5 * patch_size)                                         # H = (S^0.5) * P
+    x = x.permute(0, 2, 1)                                                          # B, S, E  -->  B, E, S
+    x = F.fold(x, output_size=(h, h), kernel_size=patch_size, stride=patch_size)    # B, E, S  -->  B, C, H, W
+    return x
+
+
+def patchswap(x1, y1, patch_size, alpha=1.0):
+    """
+        patch swap function.
+
+        Inputs:
+            x1: image tensor
+            y1: image label
+            patch_size: patch size
+            alpha: alpha hyperparameter used for generating lambda
+
+        Outputs:
+            x: PatchSwap image tensor
+            y1: label of the first image used in PatchSwap
+            y2: label of the second image used in PatchSwap
+            lam_: lambda value used for generating PatchSwap images.
+    """
+
+    x1 = patchify(x1, patch_size)                                                   # B, C, H, W  -->  B, -1, P*P*C  Image to Patches
+
+    m, n_patches, e = x1.shape                                                       # B, S, E
+
+    # Randomly ordering for combining
     new_idx = torch.randperm(m)
     x2 = x1[new_idx]
     y2 = y1[new_idx]
 
-    x1 = x1.unfold(2, args.patch_size, args.patch_size).unfold(3, args.patch_size, args.patch_size)
-    x1 = x1.reshape(-1, args.num_channels, args.num_patches, args.patch_size, args.patch_size)
+    lam = np.random.beta(alpha, alpha)                                              # Lambda hyper-parameter
+    x1_frames_count = round(lam * n_patches)                                        # Rounded number of frames to swap
+    lam_ = x1_frames_count / n_patches                                              # Updated lambda
 
-    x2 = x2.unfold(2, args.patch_size, args.patch_size).unfold(3, args.patch_size, args.patch_size)
-    x2 = x2.reshape(-1, args.num_channels, args.num_patches, args.patch_size, args.patch_size)
+    # Generate different mask for each pair using random noise while keeping counts the same.
+    mask = torch.zeros_like(x1[:, :, 0])
+    mask[:, :x1_frames_count] = 1
+    rand_noise = torch.rand_like(mask)
+    noise_sort = rand_noise.argsort(1)
+    mask = torch.gather(mask, dim=1, index=noise_sort)
+    mask = mask.unsqueeze(-1).bool()
 
-    lam = np.random.beta(alpha, alpha)
+    x = x1 * mask + x2 * (~mask)                                                    # Combining the images
+    x = unpatchify(x, patch_size)                                                   # Unpatchify sequence back to image
 
-    x1_frames_count = round(lam * args.num_patches)
-    lam_new = x1_frames_count / args.num_patches
-
-    rand_probs = torch.rand(m, args.num_patches).cuda()
-
-    if x1_frames_count > 0:
-        thresh = -torch.kthvalue(-rand_probs, x1_frames_count, -1, keepdims=True)[0]
-    else:
-        thresh = torch.Tensor([1.1]).cuda()
-
-    swap = rand_probs >= thresh
-    swap = swap.reshape(m, 1, args.num_patches, 1, 1)
-    x = x1 * swap + x2 * (~swap)
-
-    x = x.contiguous().view(m, args.num_channels, -1, args.patch_size * args.patch_size)
-    x = x.permute(0, 1, 3, 2)
-    x = x.contiguous().view(m, args.num_channels * args.patch_size * args.patch_size, -1)
-    x = F.fold(x, output_size=(args.img_size, args.img_size), kernel_size=args.patch_size, stride=args.patch_size)
-
-    return x, y1, y2, lam_new
+    return x, y1, y2, lam_
 
 
 def patchswap_loss(criterion, pred, y_a, y_b, lam):
-    return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b) + lam * np.log(lam + 1e-6) + (1 - lam) * np.log(1 - lam + 1e-6)
+    """
+        patch swap loss function.
+
+        Inputs:
+            criterion: loss function to be used
+            pred     : logits
+            y_a      : label of the first image used in PatchSwap
+            y_b      : label of the second image used in PatchSwap
+            lam      : lambda value used for generating PatchSwap images
+
+        Outputs:
+           PatchSwap loss value
+    """
+    loss = lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)                    # loss
+    normalized_loss = loss + lam * np.log(lam + 1e-6) + (1 - lam) * np.log(1 - lam + 1e-6)  # Normalized to be lowest at 0.
+    return normalized_loss
 
 
-def accuracy(args, target, output, k=5):
-    top1 = top_k_accuracy_score(target, output, k=1, labels=range(0, args.num_classes))
-    topk = top_k_accuracy_score(target, output, k=k, labels=range(0, args.num_classes))
+def accuracies(target, output, n_classes, k=5):
+    """
+        function for calculating accuracies.
+
+        Inputs:
+            target    : labels
+            output    : probabilites/logits
+            n_classes : total number of classes
+            k         : k for calculating top-k accuracy
+
+        Outputs:
+           top1 and topk accuracy
+    """
+    top1 = top_k_accuracy_score(target, output, k=1, labels=range(n_classes))
+    topk = top_k_accuracy_score(target, output, k=k, labels=range(n_classes))
     return top1, topk
 
 
-def cmatrix(args, target, predict):
-    return confusion_matrix(target, np.array(predict).argmax(1), labels=range(0, args.num_classes))
+def cmatrix(target, predict, n_classes):
+    """
+        function for calculating confusion matrix.
+
+        Inputs:
+            target    : labels
+            output    : probabilites/logits
+            n_classes : total number of classes
+
+        Outputs:
+           confusion matrix
+    """
+    return confusion_matrix(target, np.array(predict).argmax(1), labels=range(n_classes))
 
 
-def adjust_learning_rate(optimizer, epoch, args):
-    lr = args.lr
-    if epoch < args.warmup:
-        lr = lr / (args.warmup - epoch)
-    else:
-        lr *= 0.5 * (1. + math.cos(math.pi * (epoch - args.warmup) / (args.epochs - args.warmup)))
+def plot_tsne(x, y, fname, class_names=[], legends=False):  # Plotting the graph
+    num_classes = y.max() + 1
 
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
-    print(f'Epoch: {epoch + 1}\tlr: {lr}')
+    palettes = np.array(sns.color_palette('deep', n_colors=num_classes))
+
+    plt.figure(figsize=(8, 8))
+    ax = plt.subplot(aspect='equal')
+
+    for i in range(num_classes):
+        samples = x[y == i]
+        plt.scatter(samples[:, 0], samples[:, 1], label=class_names[i], color=palettes[i], marker='o', s=10)
+
+    ax.axis('off')
+    ax.axis('tight')
+    if legends:
+        plt.legend()
+    plt.savefig(fname)
+    plt.close('all')
+    return
